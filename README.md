@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![PHP](https://img.shields.io/badge/PHP-%3E%3D7.4-blue.svg)
 
-Syncochan 是一个基于 PHP 的轻量级 GitHub 静态站点同步系统，专为将 GitHub 仓库自动同步到 Web 服务器或虚拟主机而设计。
+Syncochan 是一个基于 PHP 的轻量级 GitHub 静态站点同步系统，专为将 GitHub 仓库静态站点自动同步到 Web 服务器或虚拟主机而设计。
 
 ## ✨ 特性
 

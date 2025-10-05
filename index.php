@@ -1,76 +1,132 @@
 <?php
-// Check if system is initialized
-$dbConfigPath = __DIR__ . '/backend/data/db_config.php';
-if (!is_file($dbConfigPath)) {
-    // System not initialized, redirect to setup page
-    header('Location: backend/setup.php');
-    exit;
-}
+// Simple router: serve static HTML from content/ with optional header/footer injection
+// - request path /foo -> content/foo.html OR content/foo/index.html
+// - prevent directory traversal
+// - inject content/_header.html and content/_footer.html if present
 
-// Serve static files from content/ or show simple index
+// Configuration
 $contentDir = __DIR__ . '/content';
+$headerFile = $contentDir . '/_header.html';
+$footerFile = $contentDir . '/_footer.html';
+$notFoundFile = $contentDir . '/404.html';
 
-// Get the request URI path (remove query string)
-$requestUri = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
-$requestUri = urldecode($requestUri);
+// Get the request URI path (without query string)
+$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
-// Remove leading slash if present
-$path = ltrim($requestUri, '/');
+// Normalize and decode URI
+$path = urldecode($uri);
 
-// Security: prevent directory traversal
-if (strpos($path, '..') !== false) {
-    http_response_code(403);
-    echo "Forbidden";
+// Prevent null byte
+if (strpos($path, "\0") !== false) {
+    http_response_code(400);
+    echo "Bad request";
     exit;
 }
 
-// Try to find the file in content directory
-$file = $contentDir . '/' . $path;
+// Remove leading slash
+if (strncmp($path, '/', 1) === 0) {
+    $path = substr($path, 1);
+}
 
-// If path is empty or is a directory, try index.html
-if (empty($path) || is_dir($file)) {
-    if (is_dir($file)) {
-        $indexFile = rtrim($file, '/') . '/index.html';
-    } else {
-        $indexFile = $contentDir . '/index.html';
+// Default to index
+if ($path === '') {
+    $path = 'index.html';
+}
+
+// Candidate files to check (in order)
+$candidates = [];
+
+// If the path already has an extension, prefer it
+if (pathinfo($path, PATHINFO_EXTENSION) !== '') {
+    $candidates[] = $path;
+} else {
+    // try path + .html
+    $candidates[] = $path . '.html';
+    // try directory index
+    $candidates[] = rtrim($path, '/') . '/index.html';
+}
+
+// Resolve secure file path within content dir
+function resolve_in_dir($baseDir, $relative) {
+    $full = $baseDir . '/' . $relative;
+    $realBase = realpath($baseDir);
+    $realFull = realpath($full);
+    if ($realFull === false) return false;
+    // Ensure the resolved path is inside the base dir
+    if (strpos($realFull, $realBase) !== 0) return false;
+    return $realFull;
+}
+
+$found = false;
+$foundPath = '';
+foreach ($candidates as $cand) {
+    // normalize candidate path to remove any .. segments
+    $norm = preg_replace('#/+#','/', $cand);
+    $resolved = resolve_in_dir($contentDir, $norm);
+    if ($resolved && is_file($resolved) && is_readable($resolved)) {
+        $found = true;
+        $foundPath = $resolved;
+        break;
     }
-    
-    if (is_file($indexFile)) {
-        header('Content-Type: text/html; charset=utf-8');
-        readfile($indexFile);
+}
+
+if (!$found) {
+    // serve 404 page if exists
+    if (is_file($notFoundFile) && is_readable($notFoundFile)) {
+        http_response_code(404);
+        // optionally inject header/footer
+        if (is_file($headerFile)) readfile($headerFile);
+        readfile($notFoundFile);
+        if (is_file($footerFile)) readfile($footerFile);
         exit;
     }
-}
-
-// Try to serve the file directly
-if (is_file($file)) {
-    // Get MIME type
-    $mime = mime_content_type($file) ?: 'application/octet-stream';
-    
-    // Set appropriate headers
-    header('Content-Type: ' . $mime);
-    
-    // Add caching headers for static assets
-    $ext = pathinfo($file, PATHINFO_EXTENSION);
-    if (in_array($ext, ['css', 'js', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'woff', 'woff2', 'ttf', 'eot'])) {
-        header('Cache-Control: public, max-age=31536000');
-    }
-    
-    readfile($file);
+    http_response_code(404);
+    echo "404 Not Found";
     exit;
 }
 
-// For Nuxt.js SPA routes, fall back to index.html (client-side routing)
-if (is_file($contentDir . '/index.html')) {
-    header('Content-Type: text/html; charset=utf-8');
-    readfile($contentDir . '/index.html');
-    exit;
+// At this point, $foundPath points to the real file on disk
+// Determine Content-Type: for html files, force text/html; else try to guess
+$mime = 'text/html';
+$ext = strtolower(pathinfo($foundPath, PATHINFO_EXTENSION));
+if ($ext !== 'html' && function_exists('finfo_open')) {
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $det = finfo_file($finfo, $foundPath);
+    if ($det) $mime = $det;
+    finfo_close($finfo);
+} elseif ($ext !== 'html') {
+    // fallback mapping for common types
+    $map = [
+        'css' => 'text/css',
+        'js' => 'application/javascript',
+        'json' => 'application/json',
+        'png' => 'image/png',
+        'jpg' => 'image/jpeg',
+        'jpeg' => 'image/jpeg',
+        'gif' => 'image/gif',
+        'svg' => 'image/svg+xml',
+    ];
+    if (isset($map[$ext])) $mime = $map[$ext];
 }
 
-// No content found
-http_response_code(404);
-if (is_file($contentDir . '/404.html')) {
-    readfile($contentDir . '/404.html');
+header('Content-Type: ' . $mime . '; charset=utf-8');
+
+// If html, inject header/footer for consistent layout
+if ($ext === 'html') {
+    if (is_file($headerFile) && is_readable($headerFile)) readfile($headerFile);
+    readfile($foundPath);
+    if (is_file($footerFile) && is_readable($footerFile)) readfile($footerFile);
 } else {
-    echo "Syncochan - No content. Visit /backend to configure.";
+    // binary-safe passthrough
+    $fp = fopen($foundPath, 'rb');
+    if ($fp) {
+        while (!feof($fp)) {
+            echo fread($fp, 8192);
+        }
+        fclose($fp);
+    }
 }
+
+exit;
+
+?>
