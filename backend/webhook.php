@@ -6,27 +6,56 @@ $secret = setting_get('webhook_secret');
 $payload = file_get_contents('php://input');
 $signature = $_SERVER['HTTP_X_HUB_SIGNATURE'] ?? ($_SERVER['HTTP_X_HUB_SIGNATURE_256'] ?? null);
 
+$eventType = $_SERVER['HTTP_X_GITHUB_EVENT'] ?? 'unknown';
+$remoteAddr = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+$userAgent = $_SERVER['HTTP_USER_AGENT'] ?? null;
+$payloadSize = strlen($payload);
+$signatureValid = false;
+$webhookStatus = 'success';
+$errorMessage = null;
+
 if ($secret && $signature) {
     if (strpos($signature, 'sha1=') === 0) {
         $sig = substr($signature, 5);
         $hash = hash_hmac('sha1', $payload, $secret);
         if (!hash_equals($hash, $sig)) {
             http_response_code(403);
+            $webhookStatus = 'failed';
+            $errorMessage = 'Invalid signature (SHA1)';
             echo 'invalid signature';
+            // 记录 webhook 调用（签名验证失败）
+            log_webhook_call($eventType, $remoteAddr, $userAgent, $payloadSize, false, $webhookStatus, $errorMessage);
             exit;
         }
+        $signatureValid = true;
     } elseif (strpos($signature, 'sha256=') === 0) {
         $sig = substr($signature, 7);
         $hash = hash_hmac('sha256', $payload, $secret);
         if (!hash_equals($hash, $sig)) {
             http_response_code(403);
+            $webhookStatus = 'failed';
+            $errorMessage = 'Invalid signature (SHA256)';
             echo 'invalid signature';
+            // 记录 webhook 调用（签名验证失败）
+            log_webhook_call($eventType, $remoteAddr, $userAgent, $payloadSize, false, $webhookStatus, $errorMessage);
             exit;
         }
+        $signatureValid = true;
     }
+} elseif ($secret && !$signature) {
+    // 配置了密钥但未提供签名
+    http_response_code(403);
+    $webhookStatus = 'failed';
+    $errorMessage = 'Signature required but not provided';
+    echo 'signature required';
+    log_webhook_call($eventType, $remoteAddr, $userAgent, $payloadSize, false, $webhookStatus, $errorMessage);
+    exit;
 }
 
-// 记录 webhook 接收
+// 签名验证通过或未配置签名，记录调用
+log_webhook_call($eventType, $remoteAddr, $userAgent, $payloadSize, $signatureValid, $webhookStatus, $errorMessage);
+
+// 记录 webhook 接收到日志文件
 if (function_exists('log_update')) {
     $event = $_SERVER['HTTP_X_GITHUB_EVENT'] ?? 'unknown';
     log_update("webhook received: event=$event from " . ($_SERVER['REMOTE_ADDR'] ?? 'unknown'));

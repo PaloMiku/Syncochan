@@ -11,41 +11,34 @@ if (!is_file(__DIR__ . '/data/db_config.php') && php_sapi_name() !== 'cli' && !$
 
 function repo_zip_url($owner, $repo, $branch = 'main') {
     $mirror = setting_get('github_mirror', '');
-    $baseUrl = !empty($mirror) ? rtrim($mirror, '/') : 'https://api.github.com';
-    return $baseUrl . "/repos/" . rawurlencode($owner) . "/" . rawurlencode($repo) . "/zipball/" . rawurlencode($branch);
+    
+    if (!empty($mirror)) {
+        // 镜像源使用标准的 GitHub archive zip URL 格式
+        // 例如: https://ghproxy.net/https://github.com/owner/repo/archive/refs/heads/main.zip
+        $mirror = rtrim($mirror, '/');
+        $githubUrl = "https://github.com/" . rawurlencode($owner) . "/" . rawurlencode($repo) . "/archive/refs/heads/" . rawurlencode($branch) . ".zip";
+        return $mirror . "/" . $githubUrl;
+    } else {
+        // 官方 API 使用 zipball 路径
+        return "https://api.github.com/repos/" . rawurlencode($owner) . "/" . rawurlencode($repo) . "/zipball/" . rawurlencode($branch);
+    }
 }
 
-function get_latest_commit_hash($owner, $repo, $branch = 'main', $token = '') {
-    $mirror = setting_get('github_mirror', '');
-    $baseUrl = !empty($mirror) ? rtrim($mirror, '/') : 'https://api.github.com';
-    $url = $baseUrl . "/repos/" . rawurlencode($owner) . "/" . rawurlencode($repo) . "/commits/" . rawurlencode($branch);
+function extract_commit_hash_from_dirname($dirname) {
+    // GitHub zip 目录名格式: owner-repo-hash (zipball) 或 repo-branch (archive)
+    // 例如: PaloMiku-blog-public-a1b2c3d 或 blog-public-main
     
-    $headers = [
-        'User-Agent: PHP-GHSYNC/1.0',
-        'Accept: application/vnd.github.v3+json'
-    ];
-    if ($token) $headers[] = 'Authorization: token ' . $token;
-    
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    
-    $data = curl_exec($ch);
-    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    
-    if ($data && $code === 200) {
-        $json = json_decode($data, true);
-        if (isset($json['sha'])) {
-            return substr($json['sha'], 0, 8); // 返回前8位
+    // 尝试提取 hash (zipball 格式: repo-hash)
+    if (preg_match('/-([a-f0-9]{7,40})$/i', $dirname, $matches)) {
+        $hash = $matches[1];
+        if (function_exists('log_update')) {
+            log_update("[COMMIT HASH] Extracted from directory name: " . substr($hash, 0, 8));
         }
+        return substr($hash, 0, 8);
     }
     
-    // 如果获取失败，返回时间戳作为后备方案
-    return time();
+    // 如果无法提取 hash，返回 null
+    return null;
 }
 
 function perform_update(array $opts = []): array {
@@ -172,10 +165,19 @@ function perform_update(array $opts = []): array {
     $repoRoot = $extractTo . '/' . $children[0];
     if (function_exists('log_update')) log_update("[UPDATE] Repository root: {$repoRoot}");
 
-    // 获取最新的 commit hash 用于备份命名
-    if (function_exists('log_update')) log_update("[UPDATE] Fetching latest commit hash for backup naming");
-    $commitHash = get_latest_commit_hash($owner, $repo, $branch, $token);
-    if (function_exists('log_update')) log_update("[UPDATE] Commit hash: {$commitHash}");
+    // 从解压的目录名中提取 commit hash 用于备份命名
+    if (function_exists('log_update')) log_update("[UPDATE] Extracting commit hash from directory name: {$children[0]}");
+    $commitHash = extract_commit_hash_from_dirname($children[0]);
+    
+    // 如果无法从目录名提取 hash，生成一个短的唯一标识符
+    if (!$commitHash) {
+        // 使用当前时间戳和随机数生成 8 位十六进制哈希
+        $uniqueId = substr(md5(time() . uniqid() . $children[0]), 0, 8);
+        $commitHash = $uniqueId;
+        if (function_exists('log_update')) log_update("[UPDATE] Could not extract hash from dirname, generated unique ID: {$commitHash}");
+    } else {
+        if (function_exists('log_update')) log_update("[UPDATE] Commit hash: {$commitHash}");
+    }
 
     $contentDir = __DIR__ . '/../content';
     $backupsDir = get_backups_dir();

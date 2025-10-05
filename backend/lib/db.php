@@ -58,6 +58,18 @@ function ensure_tables(PDO $pdo) {
             status VARCHAR(50) DEFAULT 'active',
             notes TEXT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS webhook_logs (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            event_type VARCHAR(100) NOT NULL,
+            remote_addr VARCHAR(100),
+            user_agent TEXT,
+            payload_size INT,
+            signature_valid TINYINT(1) DEFAULT 0,
+            status VARCHAR(50) DEFAULT 'success',
+            error_message TEXT,
+            created_at DATETIME NOT NULL,
+            INDEX idx_created_at (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
     } else {
         // sqlite
         $pdo->exec("CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);");
@@ -71,6 +83,18 @@ function ensure_tables(PDO $pdo) {
             status TEXT DEFAULT 'active',
             notes TEXT
         );");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS webhook_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            remote_addr TEXT,
+            user_agent TEXT,
+            payload_size INTEGER,
+            signature_valid INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'success',
+            error_message TEXT,
+            created_at TEXT NOT NULL
+        );");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_webhook_created_at ON webhook_logs(created_at);");
     }
 }
 
@@ -270,4 +294,64 @@ function human_size(int $bytes): string {
         $i++;
     } while($bytes >= 1024 && $i < count($units) - 1);
     return round($bytes, 2) . ' ' . $units[$i];
+}
+
+// ==================== Webhook Logs Management Functions ====================
+
+function log_webhook_call(string $eventType, ?string $remoteAddr, ?string $userAgent, int $payloadSize, bool $signatureValid, string $status = 'success', ?string $errorMessage = null): int {
+    $pdo = get_db();
+    $now = date('Y-m-d H:i:s');
+    
+    $stmt = $pdo->prepare(
+        'INSERT INTO webhook_logs (event_type, remote_addr, user_agent, payload_size, signature_valid, status, error_message, created_at) 
+         VALUES (:event_type, :remote_addr, :user_agent, :payload_size, :signature_valid, :status, :error_message, :created_at)'
+    );
+    $stmt->execute([
+        ':event_type' => $eventType,
+        ':remote_addr' => $remoteAddr,
+        ':user_agent' => $userAgent,
+        ':payload_size' => $payloadSize,
+        ':signature_valid' => $signatureValid ? 1 : 0,
+        ':status' => $status,
+        ':error_message' => $errorMessage,
+        ':created_at' => $now
+    ]);
+    
+    return (int)$pdo->lastInsertId();
+}
+
+function get_webhook_logs(int $limit = 50, int $offset = 0): array {
+    $pdo = get_db();
+    $stmt = $pdo->prepare('SELECT * FROM webhook_logs ORDER BY created_at DESC LIMIT :limit OFFSET :offset');
+    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function get_webhook_logs_count(): int {
+    $pdo = get_db();
+    $stmt = $pdo->query('SELECT COUNT(*) FROM webhook_logs');
+    return (int)$stmt->fetchColumn();
+}
+
+function get_last_webhook_call(): ?array {
+    $pdo = get_db();
+    $stmt = $pdo->query('SELECT * FROM webhook_logs ORDER BY created_at DESC LIMIT 1');
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $result ?: null;
+}
+
+function clear_webhook_logs(): bool {
+    $pdo = get_db();
+    $stmt = $pdo->prepare('DELETE FROM webhook_logs');
+    return $stmt->execute();
+}
+
+function clear_old_webhook_logs(int $daysToKeep = 30): int {
+    $pdo = get_db();
+    $cutoffDate = date('Y-m-d H:i:s', strtotime("-{$daysToKeep} days"));
+    $stmt = $pdo->prepare('DELETE FROM webhook_logs WHERE created_at < :cutoff');
+    $stmt->execute([':cutoff' => $cutoffDate]);
+    return $stmt->rowCount();
 }

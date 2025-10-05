@@ -45,9 +45,13 @@ if (!empty($_SESSION['user'])) {
                 setting_set('repo', $_POST['repo'] ?? '');
                 setting_set('branch', $_POST['branch'] ?? 'main');
                 setting_set('token', $_POST['token'] ?? '');
-                setting_set('webhook_secret', $_POST['webhook_secret'] ?? '');
                 setting_set('github_mirror', $_POST['github_mirror'] ?? '');
                 $msg = 'saved';
+            }
+            // save webhook settings
+            if (isset($_POST['action']) && $_POST['action'] === 'save_webhook') {
+                setting_set('webhook_secret', $_POST['webhook_secret'] ?? '');
+                $msg = 'webhook settings saved';
             }
             // trigger update
             if (isset($_POST['action']) && $_POST['action'] === 'update') {
@@ -65,6 +69,11 @@ if (!empty($_SESSION['user'])) {
                     if (!rename($path, $cur)) {
                         recurse_copy($path, $cur);
                         rrmdir($path);
+                    }
+                    // Clean up temporary directory after successful restore
+                    if (is_dir($tmpcur)) {
+                        rrmdir($tmpcur);
+                        if (function_exists('log_update')) log_update("restore: cleaned up temporary directory {$tmpcur}");
                     }
                     $msg = 'restored ' . htmlspecialchars($b);
                     if (function_exists('log_update')) log_update("restore: $b by {$_SESSION['user']}");
@@ -113,7 +122,7 @@ if (!empty($_SESSION['user'])) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>SyncoChan - 后台管理</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://s4.zstatic.net/ajax/libs/bootstrap/5.3.8/css/bootstrap.min.css" rel="stylesheet">
   <link href="./assets/admin.css" rel="stylesheet">
 </head>
 <body class="bg-light">
@@ -162,7 +171,7 @@ if (!empty($_SESSION['user'])) {
             
             <div class="mb-3">
               <label class="form-label fw-bold">仓库所有者 (Owner)</label>
-              <input class="form-control" name="owner" value="<?=htmlspecialchars($owner)?>" placeholder="例如: palomiku">
+              <input class="form-control" name="owner" value="<?=htmlspecialchars($owner)?>" placeholder="例如: github_username_or_org">
               <small class="form-text text-muted">GitHub 用户名或组织名称</small>
             </div>
             
@@ -185,28 +194,89 @@ if (!empty($_SESSION['user'])) {
             </div>
             
             <div class="mb-3">
-              <label class="form-label fw-bold">Webhook 密钥 (可选)</label>
-              <input type="password" class="form-control" name="webhook_secret" value="<?=htmlspecialchars($webhook)?>" placeholder="自定义密钥">
-              <small class="form-text text-muted">用于验证 GitHub Webhook 推送的安全密钥，在仓库 Settings → Webhooks 中配置时使用</small>
-              <?php 
-              $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || $_SERVER['SERVER_PORT'] == 443 ? 'https://' : 'http://';
-              $basePath = rtrim(dirname(dirname($_SERVER['PHP_SELF'])), '/');
-              $webhookUrl = $protocol . $_SERVER['HTTP_HOST'] . $basePath . '/backend/webhook.php';
-              ?>
-              <div class="alert alert-secondary mt-2 mb-0" style="font-size: 0.9em;">
-                <strong>📡 Webhook 回调地址：</strong><br>
-                <code class="text-dark"><?=htmlspecialchars($webhookUrl)?></code>
-                <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="navigator.clipboard.writeText('<?=htmlspecialchars($webhookUrl, ENT_QUOTES)?>').then(() => alert('已复制到剪贴板'))">📋 复制</button>
-              </div>
-            </div>
-            
-            <div class="mb-3">
               <label class="form-label fw-bold">GitHub 镜像源 (可选)</label>
               <input type="text" class="form-control" name="github_mirror" value="<?=htmlspecialchars($github_mirror)?>" placeholder="留空使用官方源，或输入镜像地址（如 https://ghproxy.net）">
               <small class="form-text text-muted">中国大陆用户如遇访问问题，可使用镜像源加速。留空则使用 GitHub 官方 API</small>
             </div>
             
             <button class="btn btn-success">💾 保存配置</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-body">
+          <h5 class="card-title">🪝 Webhook 自动同步配置</h5>
+          <form method="post">
+            <input type="hidden" name="csrf" value="<?=$csrf?>">
+            <input type="hidden" name="action" value="save_webhook">
+            
+            <div class="mb-3">
+              <label class="form-label fw-bold">Webhook 密钥 (Secret)</label>
+              <input type="password" class="form-control" name="webhook_secret" value="<?=htmlspecialchars($webhook)?>" placeholder="自定义安全密钥">
+              <small class="form-text text-muted">用于验证 GitHub Webhook 推送的安全密钥。建议使用复杂的随机字符串。留空则不验证签名（不推荐）。</small>
+            </div>
+            
+            <?php 
+            $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || $_SERVER['SERVER_PORT'] == 443 ? 'https://' : 'http://';
+            $basePath = rtrim(dirname(dirname($_SERVER['PHP_SELF'])), '/');
+            $webhookUrl = $protocol . $_SERVER['HTTP_HOST'] . $basePath . '/backend/webhook.php';
+            ?>
+            
+            <div class="alert alert-info" style="font-size: 0.9em;">
+              <strong>📡 Webhook 回调地址</strong><br>
+              <div class="input-group mt-2">
+                <input type="text" class="form-control" value="<?=htmlspecialchars($webhookUrl)?>" readonly id="webhookUrlInput">
+                <button type="button" class="btn btn-outline-secondary" onclick="navigator.clipboard.writeText('<?=htmlspecialchars($webhookUrl, ENT_QUOTES)?>').then(() => alert('已复制到剪贴板'))">📋 复制</button>
+              </div>
+            </div>
+            
+            <?php 
+            $lastCall = get_last_webhook_call();
+            if ($lastCall):
+            ?>
+            <div class="alert <?=$lastCall['status'] === 'success' ? 'alert-success' : 'alert-danger'?>" style="font-size: 0.9em;">
+              <strong>🕒 上次调用情况</strong><br>
+              <table class="table table-sm table-borderless mb-0" style="font-size: 0.95em;">
+                <tr>
+                  <td style="width: 120px;"><strong>时间：</strong></td>
+                  <td><?=htmlspecialchars($lastCall['created_at'])?></td>
+                </tr>
+                <tr>
+                  <td><strong>事件类型：</strong></td>
+                  <td><span class="badge bg-primary"><?=htmlspecialchars($lastCall['event_type'])?></span></td>
+                </tr>
+                <tr>
+                  <td><strong>来源 IP：</strong></td>
+                  <td><code><?=htmlspecialchars($lastCall['remote_addr'])?></code></td>
+                </tr>
+                <tr>
+                  <td><strong>签名验证：</strong></td>
+                  <td><?=$lastCall['signature_valid'] ? '<span class="badge bg-success">✓ 已验证</span>' : '<span class="badge bg-warning">未验证</span>'?></td>
+                </tr>
+                <tr>
+                  <td><strong>状态：</strong></td>
+                  <td><?=$lastCall['status'] === 'success' ? '<span class="badge bg-success">成功</span>' : '<span class="badge bg-danger">失败</span>'?></td>
+                </tr>
+                <?php if ($lastCall['error_message']): ?>
+                <tr>
+                  <td><strong>错误信息：</strong></td>
+                  <td><code class="text-danger"><?=htmlspecialchars($lastCall['error_message'])?></code></td>
+                </tr>
+                <?php endif; ?>
+              </table>
+            </div>
+            <?php else: ?>
+            <div class="alert alert-secondary" style="font-size: 0.9em;">
+              <strong>📭 暂无 Webhook 调用记录</strong><br>
+              配置完成后，当 GitHub 仓库有推送时会自动触发同步。
+            </div>
+            <?php endif; ?>
+            
+            <div class="d-flex justify-content-between align-items-center">
+              <button type="submit" class="btn btn-success">💾 保存 Webhook 配置</button>
+              <button type="button" class="btn btn-outline-primary" id="btnViewWebhookLogs">📊 查看调用历史</button>
+            </div>
           </form>
         </div>
       </div>
@@ -250,7 +320,7 @@ if (!empty($_SESSION['user'])) {
           </div>
           <div id="backupsArea">
             <table class="table table-sm table-hover" id="backupsTable">
-              <thead class="table-light"><tr><th>备份名称</th><th>创建时间</th><th>大小</th><th>操作</th></tr></thead>
+              <thead class="table-light"><tr><th>备份名称</th><th>Git Hash</th><th>创建时间</th><th>大小</th><th>操作</th></tr></thead>
               <tbody></tbody>
             </table>
           </div>
@@ -265,7 +335,6 @@ if (!empty($_SESSION['user'])) {
         <span>最近更新日志</span>
         <div>
           <button id="btnRefreshLog" class="btn btn-sm btn-outline-primary">刷新日志</button>
-          <button id="btnViewExecLog" class="btn btn-sm btn-outline-info">查看执行日志</button>
           <div class="form-check form-switch d-inline-block ms-2">
             <input class="form-check-input" type="checkbox" id="autoRefreshLog">
             <label class="form-check-label" for="autoRefreshLog">自动刷新</label>
@@ -280,7 +349,7 @@ if (!empty($_SESSION['user'])) {
 
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://s4.zstatic.net/ajax/libs/bootstrap/5.3.8/js/bootstrap.bundle.min.js"></script>
 <script>
   window.CSRF_TOKEN = '<?=$csrf?>';
 </script>

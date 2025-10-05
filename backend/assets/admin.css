@@ -45,3 +45,40 @@
   box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
   color: white;
 }
+
+/* Webhook 设置样式 */
+.webhook-url-box {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.webhook-stats {
+  font-size: 0.9em;
+}
+
+.webhook-stats table {
+  margin-bottom: 0;
+}
+
+.webhook-stats td {
+  padding: 4px 8px;
+}
+
+#webhookUrlInput {
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+/* 模态框内表格固定表头 */
+.modal .table-responsive {
+  position: relative;
+}
+
+.modal .sticky-top {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #f8f9fa;
+}

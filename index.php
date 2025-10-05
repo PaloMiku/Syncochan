@@ -1,4 +1,12 @@
 <?php
+// Check if system is initialized
+$dbConfigPath = __DIR__ . '/backend/data/db_config.php';
+if (!is_file($dbConfigPath)) {
+    // System not initialized, redirect to setup page
+    header('Location: backend/setup.php');
+    exit;
+}
+
 // Serve static files from content/ or show simple index
 $contentDir = __DIR__ . '/content';
 
@@ -64,5 +72,5 @@ http_response_code(404);
 if (is_file($contentDir . '/404.html')) {
     readfile($contentDir . '/404.html');
 } else {
-    echo "No content. Visit backend/admin.php to configure.";
+    echo "Syncochan - No content. Visit /backend to configure.";
 }
