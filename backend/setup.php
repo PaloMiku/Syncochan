@@ -60,12 +60,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     
                     $success = '初始化成功！正在跳转到登录页面...';
                     header('Refresh: 2; URL=admin.php');
-                } catch (Exception $e) {
+                } catch (PDOException $e) {
                     // 记录详细错误到日志
                     error_log('Database connection failed during setup: ' . $e->getMessage());
+                    error_log('Error Code: ' . $e->getCode());
+                    error_log('Config: driver=' . $cfg['driver'] . ', host=' . ($cfg['host'] ?? 'N/A') . ', dbname=' . ($cfg['dbname'] ?? 'N/A'));
                     
-                    // 向用户显示通用错误
-                    $error = '数据库连接失败，请检查配置';
+                    // 向用户显示详细错误信息以便排查
+                    $errorCode = $e->getCode();
+                    $errorMsg = $e->getMessage();
+                    
+                    if ($driver === 'mysql') {
+                        // MySQL/MariaDB 错误分类
+                        if (strpos($errorMsg, 'Access denied') !== false) {
+                            $error = '数据库连接失败：用户名或密码错误<br>';
+                            $error .= '<small class="text-muted">请检查数据库用户名和密码是否正确</small>';
+                        } elseif (strpos($errorMsg, 'Unknown database') !== false) {
+                            $error = '数据库连接失败：数据库不存在<br>';
+                            $error .= '<small class="text-muted">请先创建数据库「' . htmlspecialchars($cfg['dbname'] ?? '') . '」</small>';
+                        } elseif (strpos($errorMsg, 'Connection refused') !== false || strpos($errorMsg, 'Can\'t connect') !== false) {
+                            $error = '数据库连接失败：无法连接到数据库服务器<br>';
+                            $error .= '<small class="text-muted">请检查：<br>1. 数据库服务是否已启动<br>2. 主机地址「' . htmlspecialchars($cfg['host'] ?? '') . '」和端口「' . htmlspecialchars($cfg['port'] ?? '') . '」是否正确<br>3. 防火墙设置是否允许连接</small>';
+                        } elseif (strpos($errorMsg, 'timeout') !== false) {
+                            $error = '数据库连接失败：连接超时<br>';
+                            $error .= '<small class="text-muted">请检查网络连接和数据库服务器是否可访问</small>';
+                        } else {
+                            $error = '数据库连接失败<br>';
+                            $error .= '<small class="text-muted">错误信息：' . htmlspecialchars($errorMsg) . '</small>';
+                        }
+                    } else {
+                        // SQLite 错误
+                        if (strpos($errorMsg, 'unable to open database') !== false || strpos($errorMsg, 'unable to write') !== false) {
+                            $error = 'SQLite 数据库创建失败：文件权限不足<br>';
+                            $error .= '<small class="text-muted">请检查 backend/data 目录是否有写入权限</small>';
+                        } elseif (strpos($errorMsg, 'disk') !== false) {
+                            $error = 'SQLite 数据库创建失败：磁盘空间不足<br>';
+                            $error .= '<small class="text-muted">请检查磁盘空间</small>';
+                        } else {
+                            $error = 'SQLite 数据库初始化失败<br>';
+                            $error .= '<small class="text-muted">错误信息：' . htmlspecialchars($errorMsg) . '</small>';
+                        }
+                    }
+                    
+                    @unlink($cfgPath);
+                } catch (Exception $e) {
+                    // 其他类型的异常
+                    error_log('Setup failed: ' . $e->getMessage());
+                    error_log('Exception type: ' . get_class($e));
+                    
+                    $error = '系统初始化失败<br>';
+                    $error .= '<small class="text-muted">错误信息：' . htmlspecialchars($e->getMessage()) . '<br>';
+                    $error .= '错误类型：' . htmlspecialchars(get_class($e)) . '</small>';
                     @unlink($cfgPath);
                 }
             }

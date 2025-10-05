@@ -18,29 +18,60 @@ function get_db(): PDO {
     if ($pdo) return $pdo;
 
     $cfg = load_db_config();
-    if (!empty($cfg['driver']) && $cfg['driver'] === 'mysql') {
-        // require host, dbname, user, pass
-        $host = $cfg['host'] ?? '127.0.0.1';
-        $port = $cfg['port'] ?? 3306;
-        $dbname = $cfg['dbname'] ?? '';
-        $user = $cfg['user'] ?? '';
-        $pass = $cfg['pass'] ?? '';
-        $dsn = "mysql:host={$host};port={$port};dbname={$dbname};charset=utf8mb4";
-        $pdo = new PDO($dsn, $user, $pass, [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        ]);
-    } else {
-        // sqlite default
-        $path = __DIR__ . '/../data/app.db';
-        if (!is_dir(dirname($path))) mkdir(dirname($path), 0755, true);
-        $dsn = 'sqlite:' . $path;
-        $pdo = new PDO($dsn);
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    }
+    try {
+        if (!empty($cfg['driver']) && $cfg['driver'] === 'mysql') {
+            // require host, dbname, user, pass
+            $host = $cfg['host'] ?? '127.0.0.1';
+            $port = $cfg['port'] ?? 3306;
+            $dbname = $cfg['dbname'] ?? '';
+            $user = $cfg['user'] ?? '';
+            $pass = $cfg['pass'] ?? '';
+            
+            // 验证必要参数
+            if (empty($dbname)) {
+                throw new PDOException('数据库名称未配置');
+            }
+            if (empty($user)) {
+                throw new PDOException('数据库用户名未配置');
+            }
+            
+            $dsn = "mysql:host={$host};port={$port};dbname={$dbname};charset=utf8mb4";
+            $pdo = new PDO($dsn, $user, $pass, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_TIMEOUT => 5, // 5秒连接超时
+            ]);
+        } else {
+            // sqlite default
+            $path = __DIR__ . '/../data/app.db';
+            $dir = dirname($path);
+            
+            if (!is_dir($dir)) {
+                if (!mkdir($dir, 0755, true)) {
+                    throw new PDOException('无法创建数据目录：' . $dir);
+                }
+            }
+            
+            if (!is_writable($dir)) {
+                throw new PDOException('数据目录不可写：' . $dir);
+            }
+            
+            $dsn = 'sqlite:' . $path;
+            $pdo = new PDO($dsn);
+            $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        }
 
-    ensure_tables($pdo, $cfg);
-    return $pdo;
+        ensure_tables($pdo, $cfg);
+        return $pdo;
+    } catch (PDOException $e) {
+        // 记录详细错误到日志
+        error_log('Database connection error: ' . $e->getMessage());
+        error_log('DSN: ' . ($dsn ?? 'not set'));
+        error_log('Driver: ' . ($cfg['driver'] ?? 'sqlite'));
+        
+        // 重新抛出异常，保留原始错误信息
+        throw $e;
+    }
 }
 
 function get_table_prefix(): string {
