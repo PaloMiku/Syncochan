@@ -89,17 +89,29 @@ function ensure_tables(PDO $pdo, array $cfg = []) {
     $prefix = $cfg['prefix'] ?? '';
     
     if ($driver === 'mysql') {
-        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}settings (k VARCHAR(191) PRIMARY KEY, v TEXT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}users (id INT PRIMARY KEY AUTO_INCREMENT, username VARCHAR(191) UNIQUE, password VARCHAR(255)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+        // 设置 InnoDB 使用 DYNAMIC 行格式以支持更长的索引
+        $pdo->exec("SET SESSION innodb_strict_mode = 0;");
+        
+        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}settings (
+            k VARCHAR(191) PRIMARY KEY, 
+            v TEXT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;");
+        
+        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}users (
+            id INT PRIMARY KEY AUTO_INCREMENT, 
+            username VARCHAR(191) UNIQUE, 
+            password VARCHAR(255)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;");
+        
         $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}backups (
             id INT PRIMARY KEY AUTO_INCREMENT,
-            name VARCHAR(255) NOT NULL UNIQUE,
+            name VARCHAR(191) NOT NULL UNIQUE,
             path VARCHAR(500) NOT NULL,
             created_at DATETIME NOT NULL,
             size BIGINT DEFAULT 0,
             status VARCHAR(50) DEFAULT 'active',
             notes TEXT
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;");
         $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}webhook_logs (
             id INT PRIMARY KEY AUTO_INCREMENT,
             event_type VARCHAR(100) NOT NULL,
@@ -111,14 +123,15 @@ function ensure_tables(PDO $pdo, array $cfg = []) {
             error_message TEXT,
             created_at DATETIME NOT NULL,
             INDEX idx_created_at (created_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;");
+        
         $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}login_attempts (
             id INT PRIMARY KEY AUTO_INCREMENT,
             username VARCHAR(191) NOT NULL,
             ip VARCHAR(45) NOT NULL,
             timestamp INT NOT NULL,
             INDEX idx_login_attempts (username, ip, timestamp)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC;");
     } else {
         // sqlite
         $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}settings (k TEXT PRIMARY KEY, v TEXT);");
