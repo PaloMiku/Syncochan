@@ -24,11 +24,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $cfg['dbname'] = $_POST['dbname'] ?? '';
             $cfg['user'] = $_POST['user'] ?? '';
             $cfg['pass'] = $_POST['pass'] ?? '';
+            $cfg['prefix'] = $_POST['prefix'] ?? '';
             
             // Check if required fields are filled
             if (empty($cfg['dbname']) || empty($cfg['user'])) {
                 $error = '请填写数据库名称和用户名';
             }
+        } else {
+            // SQLite also supports prefix
+            $cfg['prefix'] = $_POST['prefix'] ?? '';
         }
         
         if (empty($error)) {
@@ -234,6 +238,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               <div class="mb-3">
                 <label class="form-label fw-bold">密码</label>
                 <input name="pass" type="password" class="form-control" placeholder="数据库密码">
+              </div>
+              
+              <div class="mb-3">
+                <label class="form-label fw-bold">表前缀</label>
+                <input name="prefix" class="form-control" placeholder="例如：sc_（可选，留空表示无前缀）">
+                <small class="form-text text-muted">
+                  为数据表添加前缀，适用于多个应用共用一个数据库的情况
+                </small>
               </div>
             </div>
           </div>

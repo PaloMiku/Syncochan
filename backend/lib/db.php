@@ -39,17 +39,28 @@ function get_db(): PDO {
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     }
 
-    ensure_tables($pdo);
+    ensure_tables($pdo, $cfg);
     return $pdo;
 }
 
-function ensure_tables(PDO $pdo) {
+function get_table_prefix(): string {
+    $cfg = load_db_config();
+    return $cfg['prefix'] ?? '';
+}
+
+function table_name(string $name): string {
+    return get_table_prefix() . $name;
+}
+
+function ensure_tables(PDO $pdo, array $cfg = []) {
     // Create minimal tables with SQL that depends on driver
     $driver = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $prefix = $cfg['prefix'] ?? '';
+    
     if ($driver === 'mysql') {
-        $pdo->exec("CREATE TABLE IF NOT EXISTS settings (k VARCHAR(191) PRIMARY KEY, v TEXT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-        $pdo->exec("CREATE TABLE IF NOT EXISTS users (id INT PRIMARY KEY AUTO_INCREMENT, username VARCHAR(191) UNIQUE, password VARCHAR(255)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-        $pdo->exec("CREATE TABLE IF NOT EXISTS backups (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}settings (k VARCHAR(191) PRIMARY KEY, v TEXT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}users (id INT PRIMARY KEY AUTO_INCREMENT, username VARCHAR(191) UNIQUE, password VARCHAR(255)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}backups (
             id INT PRIMARY KEY AUTO_INCREMENT,
             name VARCHAR(255) NOT NULL UNIQUE,
             path VARCHAR(500) NOT NULL,
@@ -58,7 +69,7 @@ function ensure_tables(PDO $pdo) {
             status VARCHAR(50) DEFAULT 'active',
             notes TEXT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-        $pdo->exec("CREATE TABLE IF NOT EXISTS webhook_logs (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}webhook_logs (
             id INT PRIMARY KEY AUTO_INCREMENT,
             event_type VARCHAR(100) NOT NULL,
             remote_addr VARCHAR(100),
@@ -70,7 +81,7 @@ function ensure_tables(PDO $pdo) {
             created_at DATETIME NOT NULL,
             INDEX idx_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-        $pdo->exec("CREATE TABLE IF NOT EXISTS login_attempts (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}login_attempts (
             id INT PRIMARY KEY AUTO_INCREMENT,
             username VARCHAR(191) NOT NULL,
             ip VARCHAR(45) NOT NULL,
@@ -79,9 +90,9 @@ function ensure_tables(PDO $pdo) {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
     } else {
         // sqlite
-        $pdo->exec("CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);");
-        $pdo->exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT);");
-        $pdo->exec("CREATE TABLE IF NOT EXISTS backups (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}settings (k TEXT PRIMARY KEY, v TEXT);");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT);");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}backups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
             path TEXT NOT NULL,
@@ -90,7 +101,7 @@ function ensure_tables(PDO $pdo) {
             status TEXT DEFAULT 'active',
             notes TEXT
         );");
-        $pdo->exec("CREATE TABLE IF NOT EXISTS webhook_logs (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}webhook_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_type TEXT NOT NULL,
             remote_addr TEXT,
@@ -101,14 +112,14 @@ function ensure_tables(PDO $pdo) {
             error_message TEXT,
             created_at TEXT NOT NULL
         );");
-        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_webhook_created_at ON webhook_logs(created_at);");
-        $pdo->exec("CREATE TABLE IF NOT EXISTS login_attempts (
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_webhook_created_at ON {$prefix}webhook_logs(created_at);");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS {$prefix}login_attempts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
             ip TEXT NOT NULL,
             timestamp INTEGER NOT NULL
         );");
-        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(username, ip, timestamp);");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts ON {$prefix}login_attempts(username, ip, timestamp);");
     }
 }
 
@@ -148,7 +159,8 @@ function setting_get(string $k, $default = null) {
     } catch (Exception $e) {
         return $default;
     }
-    $stmt = $pdo->prepare('SELECT v FROM settings WHERE k = :k');
+    $table = table_name('settings');
+    $stmt = $pdo->prepare("SELECT v FROM {$table} WHERE k = :k");
     $stmt->execute([':k'=>$k]);
     $v = $stmt->fetchColumn();
     return $v === false ? $default : $v;
@@ -156,23 +168,26 @@ function setting_get(string $k, $default = null) {
 
 function setting_set(string $k, $v) {
     $pdo = get_db();
-    $stmt = $pdo->prepare('REPLACE INTO settings (k,v) VALUES (:k,:v)');
+    $table = table_name('settings');
+    $stmt = $pdo->prepare("REPLACE INTO {$table} (k,v) VALUES (:k,:v)");
     return $stmt->execute([':k'=>$k,':v'=>$v]);
 }
 
 function create_admin_if_missing() {
     $pdo = get_db();
-    $stmt = $pdo->query('SELECT count(*) FROM users');
+    $table = table_name('users');
+    $stmt = $pdo->query("SELECT count(*) FROM {$table}");
     if ($stmt->fetchColumn() == 0) {
         $pw = password_hash('admin', PASSWORD_DEFAULT);
-        $stmt = $pdo->prepare('INSERT INTO users (username,password) VALUES (:u,:p)');
+        $stmt = $pdo->prepare("INSERT INTO {$table} (username,password) VALUES (:u,:p)");
         $stmt->execute([':u'=>'admin', ':p'=>$pw]);
     }
 }
 
 function validate_user(string $user, string $pass): bool {
     $pdo = get_db();
-    $stmt = $pdo->prepare('SELECT password FROM users WHERE username = :u');
+    $table = table_name('users');
+    $stmt = $pdo->prepare("SELECT password FROM {$table} WHERE username = :u");
     $stmt->execute([':u'=>$user]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$row) return false;
@@ -185,15 +200,16 @@ function check_login_attempts(string $username, string $ip): bool {
     $pdo = get_db();
     $now = time();
     $window = $now - 900; // 15分钟窗口
+    $table = table_name('login_attempts');
     
     // 清理旧记录
-    $pdo->prepare('DELETE FROM login_attempts WHERE timestamp < :window')
+    $pdo->prepare("DELETE FROM {$table} WHERE timestamp < :window")
         ->execute([':window' => $window]);
     
     // 检查失败次数
     $stmt = $pdo->prepare(
-        'SELECT COUNT(*) FROM login_attempts 
-         WHERE (username = :username OR ip = :ip) AND timestamp > :window'
+        "SELECT COUNT(*) FROM {$table} 
+         WHERE (username = :username OR ip = :ip) AND timestamp > :window"
     );
     $stmt->execute([':username' => $username, ':ip' => $ip, ':window' => $window]);
     
@@ -202,9 +218,10 @@ function check_login_attempts(string $username, string $ip): bool {
 
 function log_failed_login(string $username, string $ip) {
     $pdo = get_db();
+    $table = table_name('login_attempts');
     $stmt = $pdo->prepare(
-        'INSERT INTO login_attempts (username, ip, timestamp) 
-         VALUES (:username, :ip, :timestamp)'
+        "INSERT INTO {$table} (username, ip, timestamp) 
+         VALUES (:username, :ip, :timestamp)"
     );
     $stmt->execute([
         ':username' => $username,
@@ -215,7 +232,8 @@ function log_failed_login(string $username, string $ip) {
 
 function clear_login_attempts(string $username, string $ip) {
     $pdo = get_db();
-    $stmt = $pdo->prepare('DELETE FROM login_attempts WHERE username = :username OR ip = :ip');
+    $table = table_name('login_attempts');
+    $stmt = $pdo->prepare("DELETE FROM {$table} WHERE username = :username OR ip = :ip");
     $stmt->execute([':username' => $username, ':ip' => $ip]);
 }
 
@@ -247,7 +265,8 @@ function check_session_timeout() {
 function create_user(string $user, string $pass) {
     $pdo = get_db();
     $hash = password_hash($pass, PASSWORD_DEFAULT);
-    $stmt = $pdo->prepare('INSERT INTO users (username,password) VALUES (:u,:p)');
+    $table = table_name('users');
+    $stmt = $pdo->prepare("INSERT INTO {$table} (username,password) VALUES (:u,:p)");
     return $stmt->execute([':u'=>$user, ':p'=>$hash]);
 }
 
@@ -311,13 +330,14 @@ function get_backups_dir(): string {
 function create_backup_record(string $name, string $path, int $size = 0, string $notes = ''): int {
     $pdo = get_db();
     $driver = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $table = table_name('backups');
     
     // 使用 ISO 8601 格式的时间戳
     $now = date('Y-m-d H:i:s');
     
     $stmt = $pdo->prepare(
-        'INSERT INTO backups (name, path, created_at, size, status, notes) 
-         VALUES (:name, :path, :created_at, :size, :status, :notes)'
+        "INSERT INTO {$table} (name, path, created_at, size, status, notes) 
+         VALUES (:name, :path, :created_at, :size, :status, :notes)"
     );
     $stmt->execute([
         ':name' => $name,
@@ -333,10 +353,11 @@ function create_backup_record(string $name, string $path, int $size = 0, string 
 
 function get_backups(string $status = 'active'): array {
     $pdo = get_db();
+    $table = table_name('backups');
     if ($status === 'all') {
-        $stmt = $pdo->query('SELECT * FROM backups ORDER BY created_at DESC');
+        $stmt = $pdo->query("SELECT * FROM {$table} ORDER BY created_at DESC");
     } else {
-        $stmt = $pdo->prepare('SELECT * FROM backups WHERE status = :status ORDER BY created_at DESC');
+        $stmt = $pdo->prepare("SELECT * FROM {$table} WHERE status = :status ORDER BY created_at DESC");
         $stmt->execute([':status' => $status]);
     }
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -344,7 +365,8 @@ function get_backups(string $status = 'active'): array {
 
 function get_backup_by_name(string $name): ?array {
     $pdo = get_db();
-    $stmt = $pdo->prepare('SELECT * FROM backups WHERE name = :name LIMIT 1');
+    $table = table_name('backups');
+    $stmt = $pdo->prepare("SELECT * FROM {$table} WHERE name = :name LIMIT 1");
     $stmt->execute([':name' => $name]);
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
     return $result ?: null;
@@ -352,13 +374,15 @@ function get_backup_by_name(string $name): ?array {
 
 function update_backup_status(string $name, string $status): bool {
     $pdo = get_db();
-    $stmt = $pdo->prepare('UPDATE backups SET status = :status WHERE name = :name');
+    $table = table_name('backups');
+    $stmt = $pdo->prepare("UPDATE {$table} SET status = :status WHERE name = :name");
     return $stmt->execute([':status' => $status, ':name' => $name]);
 }
 
 function delete_backup_record(string $name): bool {
     $pdo = get_db();
-    $stmt = $pdo->prepare('DELETE FROM backups WHERE name = :name');
+    $table = table_name('backups');
+    $stmt = $pdo->prepare("DELETE FROM {$table} WHERE name = :name");
     return $stmt->execute([':name' => $name]);
 }
 
@@ -395,10 +419,11 @@ function human_size(int $bytes): string {
 function log_webhook_call(string $eventType, ?string $remoteAddr, ?string $userAgent, int $payloadSize, bool $signatureValid, string $status = 'success', ?string $errorMessage = null): int {
     $pdo = get_db();
     $now = date('Y-m-d H:i:s');
+    $table = table_name('webhook_logs');
     
     $stmt = $pdo->prepare(
-        'INSERT INTO webhook_logs (event_type, remote_addr, user_agent, payload_size, signature_valid, status, error_message, created_at) 
-         VALUES (:event_type, :remote_addr, :user_agent, :payload_size, :signature_valid, :status, :error_message, :created_at)'
+        "INSERT INTO {$table} (event_type, remote_addr, user_agent, payload_size, signature_valid, status, error_message, created_at) 
+         VALUES (:event_type, :remote_addr, :user_agent, :payload_size, :signature_valid, :status, :error_message, :created_at)"
     );
     $stmt->execute([
         ':event_type' => $eventType,
@@ -416,7 +441,8 @@ function log_webhook_call(string $eventType, ?string $remoteAddr, ?string $userA
 
 function get_webhook_logs(int $limit = 50, int $offset = 0): array {
     $pdo = get_db();
-    $stmt = $pdo->prepare('SELECT * FROM webhook_logs ORDER BY created_at DESC LIMIT :limit OFFSET :offset');
+    $table = table_name('webhook_logs');
+    $stmt = $pdo->prepare("SELECT * FROM {$table} ORDER BY created_at DESC LIMIT :limit OFFSET :offset");
     $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
     $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
     $stmt->execute();
@@ -425,27 +451,31 @@ function get_webhook_logs(int $limit = 50, int $offset = 0): array {
 
 function get_webhook_logs_count(): int {
     $pdo = get_db();
-    $stmt = $pdo->query('SELECT COUNT(*) FROM webhook_logs');
+    $table = table_name('webhook_logs');
+    $stmt = $pdo->query("SELECT COUNT(*) FROM {$table}");
     return (int)$stmt->fetchColumn();
 }
 
 function get_last_webhook_call(): ?array {
     $pdo = get_db();
-    $stmt = $pdo->query('SELECT * FROM webhook_logs ORDER BY created_at DESC LIMIT 1');
+    $table = table_name('webhook_logs');
+    $stmt = $pdo->query("SELECT * FROM {$table} ORDER BY created_at DESC LIMIT 1");
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
     return $result ?: null;
 }
 
 function clear_webhook_logs(): bool {
     $pdo = get_db();
-    $stmt = $pdo->prepare('DELETE FROM webhook_logs');
+    $table = table_name('webhook_logs');
+    $stmt = $pdo->prepare("DELETE FROM {$table}");
     return $stmt->execute();
 }
 
 function clear_old_webhook_logs(int $daysToKeep = 30): int {
     $pdo = get_db();
     $cutoffDate = date('Y-m-d H:i:s', strtotime("-{$daysToKeep} days"));
-    $stmt = $pdo->prepare('DELETE FROM webhook_logs WHERE created_at < :cutoff');
+    $table = table_name('webhook_logs');
+    $stmt = $pdo->prepare("DELETE FROM {$table} WHERE created_at < :cutoff");
     $stmt->execute([':cutoff' => $cutoffDate]);
     return $stmt->rowCount();
 }
