@@ -199,12 +199,21 @@ function perform_update(array $opts = []): array {
     if (function_exists('log_update')) log_update("[UPDATE] Extracting commit hash from directory name: {$children[0]}");
     $commitHash = extract_commit_hash_from_dirname($children[0]);
     
-    // 如果无法从目录名提取 hash，生成一个短的唯一标识符
+    // 检测是否使用镜像源
+    $isMirrorSource = !empty(setting_get('github_mirror', ''));
+    
+    // 如果无法从目录名提取 hash，生成一个唯一的随机 hash
     if (!$commitHash) {
-        // 使用当前时间戳和随机数生成 8 位十六进制哈希
-        $uniqueId = substr(md5(time() . uniqid() . $children[0]), 0, 8);
+        // 使用随机字节生成 8 位十六进制哈希（确保唯一性）
+        $uniqueId = bin2hex(random_bytes(4)); // 生成 8 位十六进制字符
         $commitHash = $uniqueId;
-        if (function_exists('log_update')) log_update("[UPDATE] Could not extract hash from dirname, generated unique ID: {$commitHash}");
+        if (function_exists('log_update')) {
+            if ($isMirrorSource) {
+                log_update("[UPDATE] Using mirror source - generated unique hash: {$commitHash} (mirror sources don't provide git commit hash)");
+            } else {
+                log_update("[UPDATE] Could not extract hash from dirname, generated unique ID: {$commitHash}");
+            }
+        }
     } else {
         if (function_exists('log_update')) log_update("[UPDATE] Commit hash: {$commitHash}");
     }
@@ -213,6 +222,13 @@ function perform_update(array $opts = []): array {
     $backupsDir = get_backups_dir();
     $backupName = 'backup_' . $commitHash;
     $backup = $backupsDir . '/' . $backupName;
+    
+    // 准备备份备注信息
+    $backupNotes = "Auto backup before update";
+    if ($isMirrorSource) {
+        $backupNotes .= " (via mirror source)";
+    }
+    
     if (function_exists('log_update')) log_update("[UPDATE] Content dir: {$contentDir}, Backup: {$backup}");
     
     // rename old to backup, then move new to content
@@ -240,8 +256,8 @@ function perform_update(array $opts = []): array {
         if (is_dir($backup)) {
             $backupCreated = true;
             $backupSize = calculate_dir_size($backup);
-            $backupId = create_backup_record($backupName, $backup, $backupSize, "Auto backup before update");
-            if (function_exists('log_update')) log_update("[UPDATE] Backup record created in database: ID={$backupId}, Size=" . round($backupSize / 1024 / 1024, 2) . "MB");
+            $backupId = create_backup_record($backupName, $backup, $backupSize, $backupNotes);
+            if (function_exists('log_update')) log_update("[UPDATE] Backup record created in database: ID={$backupId}, Size=" . round($backupSize / 1024 / 1024, 2) . "MB, Notes={$backupNotes}");
         }
     } else {
         if (function_exists('log_update')) log_update("[UPDATE] No existing content directory to backup");

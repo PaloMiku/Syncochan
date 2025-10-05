@@ -32,13 +32,19 @@ switch($action) {
         foreach ($backups as $backup) {
             // 从备份名称中提取 git hash (格式: backup_<hash>)
             $hash = '';
+            $isMirrorBackup = false;
             if (preg_match('/^backup_([a-f0-9]+)$/i', $backup['name'], $matches)) {
                 $hash = $matches[1];
+                // 检查是否是镜像源备份（通过备注判断）
+                if (!empty($backup['notes']) && strpos($backup['notes'], 'via mirror source') !== false) {
+                    $isMirrorBackup = true;
+                }
             }
             
             $out[] = [
                 'name' => $backup['name'],
                 'hash' => $hash,
+                'isMirrorBackup' => $isMirrorBackup,
                 'mtime' => strtotime($backup['created_at']),
                 'size_human' => human_size($backup['size']),
                 'notes' => $backup['notes'] ?? ''

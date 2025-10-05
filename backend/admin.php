@@ -344,7 +344,12 @@ if (!empty($_SESSION['user'])) {
             • 启用后，每次从 GitHub 同步更新前会自动创建备份<br>
             • 备份保存在 <code>backups/backup_*</code> 目录中<br>
             • 可以随时恢复到任意备份版本<br>
-            • 建议定期清理旧备份以节省磁盘空间
+            • 建议定期清理旧备份以节省磁盘空间<br>
+            <?php if (!empty(setting_get('github_mirror', ''))): ?>
+            • <strong>Git Hash 说明：</strong>使用镜像源时，显示的是系统生成的唯一标识符（镜像源不提供 git commit hash）
+            <?php else: ?>
+            • <strong>Git Hash 说明：</strong>显示的是 GitHub 仓库的 commit hash，可用于追溯代码版本
+            <?php endif; ?>
           </div>
           <div id="backupsArea">
             <table class="table table-sm table-hover" id="backupsTable">
