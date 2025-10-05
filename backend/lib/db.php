@@ -70,6 +70,13 @@ function ensure_tables(PDO $pdo) {
             created_at DATETIME NOT NULL,
             INDEX idx_created_at (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS login_attempts (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            username VARCHAR(191) NOT NULL,
+            ip VARCHAR(45) NOT NULL,
+            timestamp INT NOT NULL,
+            INDEX idx_login_attempts (username, ip, timestamp)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
     } else {
         // sqlite
         $pdo->exec("CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);");
@@ -95,6 +102,13 @@ function ensure_tables(PDO $pdo) {
             created_at TEXT NOT NULL
         );");
         $pdo->exec("CREATE INDEX IF NOT EXISTS idx_webhook_created_at ON webhook_logs(created_at);");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS login_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            timestamp INTEGER NOT NULL
+        );");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(username, ip, timestamp);");
     }
 }
 
@@ -107,6 +121,23 @@ function get_data_dir(): string {
 function log_update(string $msg) {
     $d = get_data_dir();
     $file = $d . '/update.log';
+    
+    // 检查文件大小，超过10MB则归档
+    if (file_exists($file) && filesize($file) > 10 * 1024 * 1024) {
+        $archive = $d . '/update_' . date('Y-m-d_His') . '.log';
+        rename($file, $archive);
+        
+        // 删除超过30天的旧日志
+        $oldLogs = glob($d . '/update_*.log');
+        if ($oldLogs !== false) {
+            foreach ($oldLogs as $log) {
+                if (file_exists($log) && filemtime($log) < time() - 30 * 86400) {
+                    unlink($log);
+                }
+            }
+        }
+    }
+    
     $line = '[' . date('c') . '] ' . $msg . PHP_EOL;
     file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
 }
@@ -148,6 +179,69 @@ function validate_user(string $user, string $pass): bool {
     $hash = $row['password'] ?? null;
     if (!$hash) return false;
     return password_verify($pass, $hash);
+}
+
+function check_login_attempts(string $username, string $ip): bool {
+    $pdo = get_db();
+    $now = time();
+    $window = $now - 900; // 15分钟窗口
+    
+    // 清理旧记录
+    $pdo->prepare('DELETE FROM login_attempts WHERE timestamp < :window')
+        ->execute([':window' => $window]);
+    
+    // 检查失败次数
+    $stmt = $pdo->prepare(
+        'SELECT COUNT(*) FROM login_attempts 
+         WHERE (username = :username OR ip = :ip) AND timestamp > :window'
+    );
+    $stmt->execute([':username' => $username, ':ip' => $ip, ':window' => $window]);
+    
+    return $stmt->fetchColumn() < 5; // 15分钟内允许5次尝试
+}
+
+function log_failed_login(string $username, string $ip) {
+    $pdo = get_db();
+    $stmt = $pdo->prepare(
+        'INSERT INTO login_attempts (username, ip, timestamp) 
+         VALUES (:username, :ip, :timestamp)'
+    );
+    $stmt->execute([
+        ':username' => $username,
+        ':ip' => $ip,
+        ':timestamp' => time()
+    ]);
+}
+
+function clear_login_attempts(string $username, string $ip) {
+    $pdo = get_db();
+    $stmt = $pdo->prepare('DELETE FROM login_attempts WHERE username = :username OR ip = :ip');
+    $stmt->execute([':username' => $username, ':ip' => $ip]);
+}
+
+function check_session_timeout() {
+    $timeout = 3600; // 1小时超时
+    
+    if (isset($_SESSION['last_activity'])) {
+        if (time() - $_SESSION['last_activity'] > $timeout) {
+            session_unset();
+            session_destroy();
+            header('Location: admin.php?timeout=1');
+            exit;
+        }
+    }
+    
+    $_SESSION['last_activity'] = time();
+    
+    // 验证 IP 地址（可选，防止 session 劫持）
+    if (isset($_SESSION['user_ip'])) {
+        if ($_SESSION['user_ip'] !== ($_SERVER['REMOTE_ADDR'] ?? '')) {
+            session_unset();
+            session_destroy();
+            header('Location: admin.php?security=1');
+            exit;
+        }
+    }
 }
 
 function create_user(string $user, string $pass) {

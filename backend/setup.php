@@ -57,8 +57,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $success = '初始化成功！正在跳转到登录页面...';
                     header('Refresh: 2; URL=admin.php');
                 } catch (Exception $e) {
-                    $error = '数据库连接失败：' . $e->getMessage();
-                    @unlink($cfgPath); // Remove config file on error
+                    // 记录详细错误到日志
+                    error_log('Database connection failed during setup: ' . $e->getMessage());
+                    
+                    // 向用户显示通用错误
+                    $error = '数据库连接失败，请检查配置';
+                    @unlink($cfgPath);
                 }
             }
         }

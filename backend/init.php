@@ -96,6 +96,36 @@ function perform_update(array $opts = []): array {
     if ($token) $headers[] = 'Authorization: token ' . $token;
 
     if (function_exists('log_update')) log_update("[UPDATE] Starting curl download with token: " . ($token ? 'yes' : 'no'));
+    
+    // 首先检查文件大小
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_NOBODY, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HEADER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    curl_exec($ch);
+    $contentLength = curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
+    curl_close($ch);
+    
+    $maxSize = 100 * 1024 * 1024; // 100MB 限制
+    if ($contentLength > 0 && $contentLength > $maxSize) {
+        if (function_exists('log_update')) {
+            $sizeMB = round($contentLength / 1024 / 1024, 2);
+            log_update("[UPDATE ERROR] Repository too large: {$sizeMB} MB (max 100 MB)");
+        }
+        $releaseLock();
+        return ['ok'=>false,'msg'=>'repository too large (max 100MB)'];
+    }
+    
+    if (function_exists('log_update') && $contentLength > 0) {
+        $sizeMB = round($contentLength / 1024 / 1024, 2);
+        log_update("[UPDATE] Expected download size: {$sizeMB} MB");
+    }
+    
+    // 开始实际下载
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);

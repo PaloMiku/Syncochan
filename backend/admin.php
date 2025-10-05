@@ -16,10 +16,23 @@ $csrf = $_SESSION['csrf_token'];
 if (isset($_POST['action']) && $_POST['action'] === 'login') {
     $u = $_POST['username'] ?? '';
     $p = $_POST['password'] ?? '';
-    if (validate_user($u,$p)) {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+    
+    // 检查登录尝试限制
+    if (!check_login_attempts($u, $ip)) {
+        $err = 'too_many_attempts';
+    } elseif (validate_user($u,$p)) {
+        // 登录成功 - 清除失败记录并重新生成 Session ID
+        clear_login_attempts($u, $ip);
+        session_regenerate_id(true);
         $_SESSION['user'] = $u;
+        $_SESSION['login_time'] = time();
+        $_SESSION['last_activity'] = time();
+        $_SESSION['user_ip'] = $ip;
         header('Location: admin.php'); exit;
     } else {
+        // 登录失败 - 记录失败尝试
+        log_failed_login($u, $ip);
         $err = 'invalid';
     }
 }
@@ -28,6 +41,9 @@ if (isset($_GET['logout'])) { session_destroy(); header('Location: admin.php'); 
 
 // require login for actions
 if (!empty($_SESSION['user'])) {
+    // 检查 Session 超时
+    check_session_timeout();
+    
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // verify csrf
     if (empty($_POST['csrf']) || !hash_equals($csrf, $_POST['csrf'])) {
@@ -133,7 +149,19 @@ if (!empty($_SESSION['user'])) {
       <div class="login-form-section">
         <img src="./assets/images/logo.png" alt="SyncoChan Logo" class="login-logo">
         <h4 class="login-title">欢迎回来</h4>
-        <?php if (!empty($err)) echo '<div class="alert alert-danger">用户名或密码错误</div>'; ?>
+        <?php if (!empty($err)): ?>
+          <?php if ($err === 'too_many_attempts'): ?>
+            <div class="alert alert-danger">登录尝试次数过多，请15分钟后再试</div>
+          <?php elseif ($err === 'invalid'): ?>
+            <div class="alert alert-danger">用户名或密码错误</div>
+          <?php endif; ?>
+        <?php endif; ?>
+        <?php if (!empty($_GET['timeout'])): ?>
+          <div class="alert alert-warning">会话已超时，请重新登录</div>
+        <?php endif; ?>
+        <?php if (!empty($_GET['security'])): ?>
+          <div class="alert alert-danger">安全验证失败，请重新登录</div>
+        <?php endif; ?>
         <form method="post">
           <input type="hidden" name="action" value="login">
           <div class="mb-3">

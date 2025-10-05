@@ -13,6 +13,9 @@ if (empty($_SESSION['user'])) {
     exit;
 }
 
+// 检查 Session 超时
+check_session_timeout();
+
 $input = json_decode(file_get_contents('php://input'), true) ?? $_POST ?? [];
 $action = $input['action'] ?? '';
 $csrf = $input['csrf'] ?? '';
